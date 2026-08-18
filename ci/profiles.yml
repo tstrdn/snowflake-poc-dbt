@@ -1,0 +1,24 @@
+# Offline-only profile, used by `dbt parse` and sqlfluff in CI.
+#
+# Why this exists: the root profiles.yml is deliberately credential-free,
+# because Snowflake's managed dbt runtime supplies the connection - the project
+# executes as the role that invoked EXECUTE DBT PROJECT. dbt Core running on a
+# CI runner does not know that, and refuses to load a Snowflake profile with no
+# `account`. So static checks use this throwaway profile instead.
+#
+# Nothing here ever connects to anything. The values are placeholders, and this
+# directory is excluded from the published artifact.
+
+jaffle_shop:
+  target: parse
+  outputs:
+    parse:
+      type: snowflake
+      account: offline-parse-only
+      user: OFFLINE
+      password: offline
+      database: ANALYTICS
+      schema: JAFFLE_STG
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      threads: 4

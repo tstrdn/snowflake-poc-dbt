@@ -1,0 +1,172 @@
+name: Release artifact
+
+# Builds the dbt project artifact exactly once and publishes it to Artifactory.
+# Every environment later deploys this same file - verified by checksum - which
+# is what "build once, deploy to all" means in practice.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "models/**"
+      - "seeds/**"
+      - "macros/**"
+      - "tests/**"
+      - "dbt_project.yml"
+      - "profiles.yml"
+      - "packages.yml"
+      - "VERSION"
+      - ".github/workflows/release.yml"
+
+concurrency:
+  group: dbt-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      released: ${{ steps.version.outputs.released }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "v${version}" >/dev/null 2>&1; then
+            echo "Tag v${version} exists; artifact already published."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.released == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dbt
+        if: steps.version.outputs.released == 'true'
+        run: pip install --quiet -r requirements-ci.txt
+
+      # The one place dependencies are resolved. Snowflake has no outbound
+      # network access on a trial account, so dbt_packages/ has to be inside
+      # the artifact rather than fetched at deploy time.
+      - name: Resolve dependencies
+        if: steps.version.outputs.released == 'true'
+        run: |
+          dbt deps
+          echo "Vendored packages:"
+          ls -1 dbt_packages/
+
+      - name: Verify the project parses
+        if: steps.version.outputs.released == 'true'
+        run: dbt parse --profiles-dir ci --target parse
+
+      - name: Assemble the artifact
+        if: steps.version.outputs.released == 'true'
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="snowflake-poc-dbt-${VERSION}.tgz"
+
+          # Everything Snowflake needs to run the project, and nothing else.
+          # CI configuration, docs and local development helpers are excluded
+          # so the artifact is exactly the deployable unit.
+          tar --create --gzip --file "${name}" \
+            --exclude-vcs \
+            --exclude='./.github' \
+            --exclude='./docs' \
+            --exclude='./dev' \
+            --exclude='./deploy' \
+            --exclude='./target' \
+            --exclude='./logs' \
+            --exclude='./.git*' \
+            --exclude='./requirements-ci.txt' \
+            --exclude='./.sqlfluff' \
+            --exclude='./ci' \
+            ./dbt_project.yml ./profiles.yml ./packages.yml ./package-lock.yml \
+            ./models ./seeds ./macros ./tests ./dbt_packages ./VERSION
+
+          sha256sum "${name}" | tee "${name}.sha256"
+
+          echo "artifact=${name}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 < "${name}.sha256")" >> "$GITHUB_OUTPUT"
+
+          echo "Artifact contents:"
+          tar --list --file "${name}" | head -30
+
+      - uses: jfrog/setup-jfrog-cli@v4
+        if: steps.version.outputs.released == 'true'
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+      - name: Publish to Artifactory
+        if: steps.version.outputs.released == 'true'
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          jf rt upload "${ARTIFACT}" \
+            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
+            --fail-no-op
+
+          jf rt upload "${ARTIFACT}.sha256" \
+            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
+            --fail-no-op
+
+      - name: Tag the release
+        if: steps.version.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Artifact v${VERSION} (sha256 ${SHA256})"
+          git push origin "v${VERSION}"
+
+      - name: Summarise
+        if: steps.version.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          {
+            echo "## Artifact v${VERSION} published"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| SHA256 | \`${SHA256}\` |"
+            echo "| Repository | \`snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/\` |"
+            echo
+            echo "Every environment deploys this exact file. The checksum above should"
+            echo "match the one reported by each deployment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-development:
+    name: Deploy to development
+    needs: build
+    if: needs.build.outputs.released == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      version: ${{ needs.build.outputs.version }}
+    secrets: inherit

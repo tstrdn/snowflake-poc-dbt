@@ -1,0 +1,185 @@
+name: Deploy
+
+# Reusable deployment of one artifact version to one environment.
+#
+# Development runs this automatically after a release; test and production run
+# it through promote.yml behind an approval gate. The steps are identical in
+# every case - only the target account and the gate differ.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Target environment (dev, tst or prd)
+        required: true
+        type: string
+      version:
+        description: Artifact version to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version }} to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    concurrency:
+      # Snowflake refuses concurrent EXECUTE DBT PROJECT against the same
+      # project object, so deployments to one environment must queue.
+      group: dbt-deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the Snowflake CLI
+        run: pip install --quiet snowflake-cli==3.24.1
+
+      - uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+      - name: Download the artifact
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          jf rt download \
+            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
+            artifact/ --flat --fail-no-op
+
+          ls -l artifact/
+
+      # The point of the whole design. If this check ever fails, the thing
+      # about to reach production is not the thing that was tested.
+      - name: Verify the checksum
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cd artifact
+
+          expected=$(cut -d' ' -f1 < "snowflake-poc-dbt-${VERSION}.tgz.sha256")
+          actual=$(sha256sum "snowflake-poc-dbt-${VERSION}.tgz" | cut -d' ' -f1)
+
+          echo "expected ${expected}"
+          echo "actual   ${actual}"
+
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Checksum mismatch. The artifact was altered in transit or in storage."
+            exit 1
+          fi
+
+          echo "ARTIFACT_SHA256=${actual}" >> "$GITHUB_ENV"
+
+      - name: Unpack
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p project
+          tar --extract --gzip --file "artifact/snowflake-poc-dbt-${VERSION}.tgz" --directory project
+          ls -1 project/
+
+      - name: Write the private key
+        env:
+          SF_PRIVATE_KEY: ${{ secrets.SF_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$SF_PRIVATE_KEY" > /tmp/sf_key.p8
+          openssl pkey -in /tmp/sf_key.p8 -noout
+
+      - name: Deploy the project object
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+          TARGET: ${{ inputs.environment }}
+        run: |
+          cd project
+          snow dbt deploy JAFFLE_SHOP \
+            --source . \
+            --profiles-dir . \
+            --default-target "$TARGET" \
+            --install-local-deps \
+            --temporary-connection \
+            --account "$SF_ACCOUNT" \
+            --user "$SF_USER" \
+            --private-key-file /tmp/sf_key.p8 \
+            --authenticator SNOWFLAKE_JWT \
+            --role TRANSFORMER \
+            --warehouse WH_TRANSFORM_XS \
+            --database OPS \
+            --schema DBT_PROJECTS
+
+      - name: Run the project
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+          TARGET: ${{ inputs.environment }}
+        run: |
+          cd project
+          snow dbt execute JAFFLE_SHOP build --target "$TARGET" \
+            --temporary-connection \
+            --account "$SF_ACCOUNT" \
+            --user "$SF_USER" \
+            --private-key-file /tmp/sf_key.p8 \
+            --authenticator SNOWFLAKE_JWT \
+            --role TRANSFORMER \
+            --warehouse WH_TRANSFORM_XS \
+            --database OPS \
+            --schema DBT_PROJECTS
+
+      - name: Record the deployment
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "$VERSION" > "deploy/${ENVIRONMENT}.version"
+
+          if git diff --quiet -- "deploy/${ENVIRONMENT}.version"; then
+            echo "Already recorded as ${VERSION}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "deploy/${ENVIRONMENT}.version"
+          git commit -m "chore(${ENVIRONMENT}): deploy artifact v${VERSION}"
+
+          # Needs the github-actions bot as a bypass actor on the main branch
+          # ruleset - see the infrastructure repository's bootstrap runbook.
+          git push origin HEAD:main
+
+      - name: Clean up the key
+        if: always()
+        run: rm -f /tmp/sf_key.p8
+
+      - name: Summarise
+        if: always()
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "## ${ENVIRONMENT} — artifact v${VERSION}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Environment | \`${ENVIRONMENT}\` |"
+            echo "| Artifact version | \`${VERSION}\` |"
+            echo "| SHA256 | \`${ARTIFACT_SHA256:-not verified}\` |"
+            echo "| Result | ${{ job.status }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

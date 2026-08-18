@@ -1,0 +1,7 @@
+# Pinned so a CI run months from now builds the same artifact as today. The
+# published artifact records nothing about the tooling that made it, so the
+# pins here are what make a rebuild reproducible.
+dbt-core==1.12.2
+dbt-snowflake==1.12.0
+snowflake-cli==3.24.1
+sqlfluff==3.4.2

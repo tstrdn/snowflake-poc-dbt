@@ -1,0 +1,30 @@
+[sqlfluff]
+templater = jinja
+dialect = snowflake
+max_line_length = 120
+
+# Rules that fight dbt conventions rather than catching real problems:
+#   AM04  select * is normal in staging models
+#   ST06  column ordering is a readability choice, not a defect
+#   RF01  sqlfluff cannot resolve ref() targets without a live warehouse
+exclude_rules = AM04, ST06, RF01
+
+[sqlfluff:indentation]
+indented_joins = false
+indented_ctes = false
+template_blocks_indent = false
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = true
+
+[sqlfluff:templater:jinja:context]
+payment_methods = ["credit_card", "coupon", "bank_transfer", "gift_card"]
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower

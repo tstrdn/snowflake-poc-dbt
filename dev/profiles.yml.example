@@ -1,0 +1,38 @@
+# Local development profile for dbt Core.
+#
+#   cp dev/profiles.yml.example dev/profiles.yml
+#   # fill in the values below, then:
+#   dbt build --profiles-dir dev --target sandbox
+#
+# dev/profiles.yml is git-ignored. Credentials never belong in the repository,
+# and this file is separate from the root profiles.yml precisely because the
+# root one is deployed into Snowflake as part of the artifact.
+#
+# The sandbox target builds everything into your own schema. The
+# generate_schema_name macro collapses the custom staging and mart schemas into
+# the one target schema for sandbox and ci targets, so your work cannot land in
+# the shared JAFFLE_STG or JAFFLE_MARTS.
+
+jaffle_shop:
+  target: sandbox
+  outputs:
+    sandbox:
+      type: snowflake
+
+      # Development account only. Format: <organization>-<account_name>
+      account: MYORG-MYDEVACCOUNT
+
+      user: YOUR_SNOWFLAKE_USER
+      authenticator: externalbrowser
+
+      # Or, for key-pair authentication instead of the browser prompt:
+      # private_key_path: ~/.ssh/snowflake_dev.p8
+
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      database: ANALYTICS
+
+      # Your personal schema. Convention is DBT_ plus your username.
+      schema: DBT_YOURNAME
+
+      threads: 4

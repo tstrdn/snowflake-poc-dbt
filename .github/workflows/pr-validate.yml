@@ -1,0 +1,174 @@
+name: PR validation
+
+# Static checks first, then a real build against a throwaway schema in the
+# development account. Validating dbt without executing it only proves the SQL
+# parses; the ephemeral build proves it runs and that the tests pass.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: dbt-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  static:
+    name: Lint and parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dbt
+        run: pip install --quiet -r requirements-ci.txt
+
+      - name: dbt deps
+        run: dbt deps
+
+      # The offline profile, not the deployed one - see ci/profiles.yml.
+      - name: dbt parse
+        run: dbt parse --profiles-dir ci --target parse
+
+      - name: sqlfluff
+        run: sqlfluff lint models/ tests/ --templater jinja
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Require a VERSION bump when the project changes
+        run: |
+          base="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+
+          if ! git diff --quiet "$base" HEAD -- models/ seeds/ macros/ tests/ dbt_project.yml profiles.yml packages.yml; then
+            if git diff --quiet "$base" HEAD -- VERSION; then
+              echo "::error file=VERSION::The dbt project changed but VERSION did not."
+              echo "Artifacts are immutable; a changed project needs a new version."
+              exit 1
+            fi
+
+            old=$(git show "$base:VERSION" | tr -d '[:space:]')
+            new=$(tr -d '[:space:]' < VERSION)
+            echo "VERSION ${old} -> ${new}"
+
+            if [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | head -1)" != "$old" ] || [ "$old" = "$new" ]; then
+              echo "::error file=VERSION::VERSION must increase (${old} -> ${new})."
+              exit 1
+            fi
+          else
+            echo "No project changes; VERSION bump not required."
+          fi
+
+  build:
+    name: Build in an ephemeral schema
+    runs-on: ubuntu-latest
+    needs: static
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install tooling
+        run: pip install --quiet -r requirements-ci.txt
+
+      # Snowflake cannot reach the package index, so dependencies are resolved
+      # here and travel with the project.
+      - name: dbt deps
+        run: dbt deps
+
+      - name: Write the private key
+        env:
+          SF_PRIVATE_KEY: ${{ secrets.SF_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$SF_PRIVATE_KEY" > /tmp/sf_key.p8
+          # A key that arrived mangled produces a confusing JWT error much
+          # later; check the shape now.
+          openssl pkey -in /tmp/sf_key.p8 -noout
+
+      - name: Target the pull request schema
+        run: |
+          schema="PR_${{ github.event.pull_request.number }}"
+          sed -i "s/PR_PLACEHOLDER/${schema}/" profiles.yml
+          echo "CI_SCHEMA=${schema}" >> "$GITHUB_ENV"
+          echo "DBT_PROJECT_NAME=JAFFLE_SHOP_PR_${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+          grep -A2 '    ci:' profiles.yml
+
+      - name: Deploy the project
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+        run: |
+          snow dbt deploy "$DBT_PROJECT_NAME" \
+            --source . \
+            --profiles-dir . \
+            --default-target ci \
+            --install-local-deps \
+            --force \
+            --temporary-connection \
+            --account "$SF_ACCOUNT" \
+            --user "$SF_USER" \
+            --private-key-file /tmp/sf_key.p8 \
+            --authenticator SNOWFLAKE_JWT \
+            --role TRANSFORMER \
+            --warehouse WH_TRANSFORM_XS \
+            --database OPS \
+            --schema DBT_PROJECTS
+
+      - name: dbt build
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+        run: |
+          # `build` runs seeds, models and tests in dependency order, so a
+          # broken model and a failing test both surface here.
+          snow dbt execute "$DBT_PROJECT_NAME" build --target ci \
+            --temporary-connection \
+            --account "$SF_ACCOUNT" \
+            --user "$SF_USER" \
+            --private-key-file /tmp/sf_key.p8 \
+            --authenticator SNOWFLAKE_JWT \
+            --role TRANSFORMER \
+            --warehouse WH_TRANSFORM_XS \
+            --database OPS \
+            --schema DBT_PROJECTS
+
+      # Always, so a failed build does not leave a schema and a project object
+      # behind. pr-cleanup.yml is the backstop for cancelled runs.
+      - name: Tear down
+        if: always()
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+        run: |
+          conn=(--temporary-connection
+                --account "$SF_ACCOUNT" --user "$SF_USER"
+                --private-key-file /tmp/sf_key.p8
+                --authenticator SNOWFLAKE_JWT
+                --role TRANSFORMER --warehouse WH_TRANSFORM_XS
+                --database OPS --schema DBT_PROJECTS)
+
+          snow dbt drop "$DBT_PROJECT_NAME" "${conn[@]}" || echo "project object already gone"
+          snow sql -q "drop schema if exists ANALYTICS.${CI_SCHEMA} cascade" "${conn[@]}" \
+            || echo "schema already gone"
+
+          rm -f /tmp/sf_key.p8

@@ -1,0 +1,51 @@
+# Connection profile for dbt Projects on Snowflake.
+#
+# There are deliberately no credentials here. When Snowflake executes a
+# DBT PROJECT object, the session already is the connection - it runs as the
+# role that invoked EXECUTE DBT PROJECT. So a target only has to say which
+# database, schema, role and warehouse to build with.
+#
+# This file is deployed into Snowflake as part of the artifact, which is why it
+# must stay credential-free. Local development uses dev/profiles.yml instead.
+
+jaffle_shop:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      database: ANALYTICS
+      schema: JAFFLE_STG
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      threads: 4
+
+    tst:
+      type: snowflake
+      database: ANALYTICS
+      schema: JAFFLE_STG
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      threads: 4
+
+    prd:
+      type: snowflake
+      database: ANALYTICS
+      schema: JAFFLE_STG
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      threads: 8
+
+    # Ephemeral pull request validation. Every model lands in one throwaway
+    # schema, which CI creates and drops - see .github/workflows/pr-validate.yml.
+    #
+    # The schema below is a placeholder that pr-validate.yml rewrites to PR_<n>
+    # in its working copy before deploying. It is not an env_var() call because
+    # the project executes inside Snowflake, where the runner's environment does
+    # not exist - the value has to be baked into the artifact that gets deployed.
+    ci:
+      type: snowflake
+      database: ANALYTICS
+      schema: PR_PLACEHOLDER
+      role: TRANSFORMER
+      warehouse: WH_TRANSFORM_XS
+      threads: 4

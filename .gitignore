@@ -1,0 +1,18 @@
+# dbt build output. dbt_packages is deliberately NOT committed - CI resolves it
+# with `dbt deps` and vendors it into the published artifact instead, so the
+# artifact is self-contained without the repository carrying vendored code.
+target/
+dbt_packages/
+logs/
+package-lock.yml
+
+# Local development profile, filled in with your own credentials.
+dev/profiles.yml
+
+# Never commit private keys.
+*.p8
+*.pem
+
+.DS_Store
+.venv/
+.user.yml

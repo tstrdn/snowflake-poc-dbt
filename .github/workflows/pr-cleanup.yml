@@ -1,0 +1,54 @@
+name: PR cleanup
+
+# Backstop for the teardown in pr-validate.yml. That step runs with `always()`,
+# but a cancelled run or a runner that dies skips it entirely, and an orphaned
+# schema quietly consumes storage until someone notices.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Drop the pull request schema
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the Snowflake CLI
+        run: pip install --quiet snowflake-cli==3.24.1
+
+      - name: Write the private key
+        env:
+          SF_PRIVATE_KEY: ${{ secrets.SF_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$SF_PRIVATE_KEY" > /tmp/sf_key.p8
+
+      - name: Drop the project object and schema
+        env:
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          conn=(--temporary-connection
+                --account "$SF_ACCOUNT" --user "$SF_USER"
+                --private-key-file /tmp/sf_key.p8
+                --authenticator SNOWFLAKE_JWT
+                --role TRANSFORMER --warehouse WH_TRANSFORM_XS
+                --database OPS --schema DBT_PROJECTS)
+
+          # Both are expected to be gone already on the happy path.
+          snow dbt drop "JAFFLE_SHOP_PR_${PR_NUMBER}" "${conn[@]}" || true
+          snow sql -q "drop schema if exists ANALYTICS.PR_${PR_NUMBER} cascade" "${conn[@]}" || true
+
+          rm -f /tmp/sf_key.p8

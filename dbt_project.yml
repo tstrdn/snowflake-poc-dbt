@@ -1,0 +1,46 @@
+name: "jaffle_shop"
+version: "1.0.0"
+config-version: 2
+
+profile: "jaffle_shop"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+require-dbt-version: [">=1.8.0", "<2.0.0"]
+
+vars:
+  # Drives the payment pivot in models/marts/orders.sql. Adding a method here
+  # adds a column there, rather than editing SQL in two places.
+  payment_methods: ["credit_card", "coupon", "bank_transfer", "gift_card"]
+
+models:
+  jaffle_shop:
+    staging:
+      +schema: JAFFLE_STG
+      +materialized: view
+    marts:
+      +schema: JAFFLE_MARTS
+      +materialized: table
+
+seeds:
+  jaffle_shop:
+    +database: RAW
+    +schema: JAFFLE_RAW
+    +quote_columns: false
+    raw_customers:
+      +column_types:
+        id: integer
+    raw_orders:
+      +column_types:
+        id: integer
+        user_id: integer
+    raw_payments:
+      +column_types:
+        id: integer
+        order_id: integer
+        amount: integer

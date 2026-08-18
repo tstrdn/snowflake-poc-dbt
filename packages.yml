@@ -1,0 +1,11 @@
+# Resolved by CI, never by Snowflake.
+#
+# `dbt deps` needs outbound network access, which trial accounts do not have.
+# The release workflow runs `dbt deps` on the runner and ships the resulting
+# dbt_packages/ directory inside the artifact, so the deployed project has
+# every dependency already present. That also makes the artifact genuinely
+# immutable: the same tarball cannot resolve to different package versions
+# later.
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.3.0", "<2.0.0"]

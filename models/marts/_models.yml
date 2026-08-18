@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: orders
+    description: >
+      One row per order, with payment amounts pivoted out by method. This is
+      the model the PoC uses to prove that a promoted artifact produced the
+      same result in every environment.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Foreign key to customers.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('customers')
+              field: customer_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              values:
+                ["placed", "shipped", "completed", "return_pending", "returned"]
+      - name: amount
+        description: Total paid across all payment methods.
+        data_tests:
+          - not_null
+
+  - name: customers
+    description: One row per customer, with order history rolled up.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: number_of_orders
+        description: Zero for customers who have never ordered.
+        data_tests:
+          - not_null
+      - name: customer_lifetime_value
+        data_tests:
+          - not_null
