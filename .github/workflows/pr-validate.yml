@@ -17,26 +17,29 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
+  # Must match dbt-core in requirements-ci.txt, and must be a version Snowflake
+  # supports: 1.11.11, 1.10.15 or 1.9.4.
+  DBT_VERSION: "1.11.11"
 
 jobs:
   static:
     name: Lint and parse
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          # Without this, setup-python looks for requirements.txt or
+          # pyproject.toml, finds neither, and fails before installing anything.
+          cache-dependency-path: requirements-ci.txt
 
       - name: Install dbt
         run: pip install --quiet -r requirements-ci.txt
-
-      - name: dbt deps
-        run: dbt deps
 
       # The offline profile, not the deployed one - see ci/profiles.yml.
       - name: dbt parse
@@ -46,7 +49,7 @@ jobs:
         run: sqlfluff lint models/ tests/ --templater jinja
 
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,7 +58,7 @@ jobs:
           base="origin/${{ github.base_ref }}"
           git fetch --quiet origin "${{ github.base_ref }}"
 
-          if ! git diff --quiet "$base" HEAD -- models/ seeds/ macros/ tests/ dbt_project.yml profiles.yml packages.yml; then
+          if ! git diff --quiet "$base" HEAD -- models/ seeds/ macros/ tests/ dbt_project.yml profiles.yml; then
             if git diff --quiet "$base" HEAD -- VERSION; then
               echo "::error file=VERSION::The dbt project changed but VERSION did not."
               echo "Artifacts are immutable; a changed project needs a new version."
@@ -80,21 +83,27 @@ jobs:
     needs: static
     environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          # Without this, setup-python looks for requirements.txt or
+          # pyproject.toml, finds neither, and fails before installing anything.
+          cache-dependency-path: requirements-ci.txt
 
-      - name: Install tooling
+      - name: Install the dbt toolchain
         run: pip install --quiet -r requirements-ci.txt
+
+      # This job needs dbt and the Snowflake CLI, which pin incompatible
+      # protobuf majors. pipx gives the CLI its own environment and still puts
+      # `snow` on PATH, so neither has to be downgraded.
+      - name: Install the Snowflake CLI in isolation
+        run: pipx install "$(grep -vE '^\s*#|^\s*$' requirements-snow.txt | head -1)"
 
       # Snowflake cannot reach the package index, so dependencies are resolved
       # here and travel with the project.
-      - name: dbt deps
-        run: dbt deps
-
       - name: Write the private key
         env:
           SF_PRIVATE_KEY: ${{ secrets.SF_PRIVATE_KEY }}
@@ -122,7 +131,7 @@ jobs:
             --source . \
             --profiles-dir . \
             --default-target ci \
-            --install-local-deps \
+            --dbt-version "$DBT_VERSION" \
             --force \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
@@ -141,7 +150,10 @@ jobs:
         run: |
           # `build` runs seeds, models and tests in dependency order, so a
           # broken model and a failing test both surface here.
-          snow dbt execute "$DBT_PROJECT_NAME" build --target ci \
+          # Connection options must come BEFORE the project name: everything
+          # after the dbt command is forwarded verbatim to dbt, so flags placed
+          # at the end never reach the Snowflake CLI at all.
+          snow dbt execute \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
             --user "$SF_USER" \
@@ -150,7 +162,8 @@ jobs:
             --role TRANSFORMER \
             --warehouse WH_TRANSFORM_XS \
             --database OPS \
-            --schema DBT_PROJECTS
+            --schema DBT_PROJECTS \
+            "$DBT_PROJECT_NAME" build --target ci
 
       # Always, so a failed build does not leave a schema and a project object
       # behind. pr-cleanup.yml is the backstop for cancelled runs.
@@ -167,7 +180,7 @@ jobs:
                 --role TRANSFORMER --warehouse WH_TRANSFORM_XS
                 --database OPS --schema DBT_PROJECTS)
 
-          snow dbt drop "$DBT_PROJECT_NAME" "${conn[@]}" || echo "project object already gone"
+          snow dbt drop "${conn[@]}" "$DBT_PROJECT_NAME" || echo "project object already gone"
           snow sql -q "drop schema if exists ANALYTICS.${CI_SCHEMA} cascade" "${conn[@]}" \
             || echo "schema already gone"
 

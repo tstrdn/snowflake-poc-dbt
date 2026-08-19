@@ -14,7 +14,6 @@ on:
       - "tests/**"
       - "dbt_project.yml"
       - "profiles.yml"
-      - "packages.yml"
       - "VERSION"
       - ".github/workflows/release.yml"
 
@@ -33,7 +32,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       released: ${{ steps.version.outputs.released }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -50,25 +49,18 @@ jobs:
             echo "released=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.version.outputs.released == 'true'
         with:
           python-version: "3.12"
           cache: pip
+          # Without this, setup-python looks for requirements.txt or
+          # pyproject.toml, finds neither, and fails before installing anything.
+          cache-dependency-path: requirements-ci.txt
 
       - name: Install dbt
         if: steps.version.outputs.released == 'true'
         run: pip install --quiet -r requirements-ci.txt
-
-      # The one place dependencies are resolved. Snowflake has no outbound
-      # network access on a trial account, so dbt_packages/ has to be inside
-      # the artifact rather than fetched at deploy time.
-      - name: Resolve dependencies
-        if: steps.version.outputs.released == 'true'
-        run: |
-          dbt deps
-          echo "Vendored packages:"
-          ls -1 dbt_packages/
 
       - name: Verify the project parses
         if: steps.version.outputs.released == 'true'
@@ -98,8 +90,8 @@ jobs:
             --exclude='./requirements-ci.txt' \
             --exclude='./.sqlfluff' \
             --exclude='./ci' \
-            ./dbt_project.yml ./profiles.yml ./packages.yml ./package-lock.yml \
-            ./models ./seeds ./macros ./tests ./dbt_packages ./VERSION
+            ./dbt_project.yml ./profiles.yml \
+            ./models ./seeds ./macros ./tests ./VERSION
 
           sha256sum "${name}" | tee "${name}.sha256"
 
@@ -109,7 +101,7 @@ jobs:
           echo "Artifact contents:"
           tar --list --file "${name}" | head -30
 
-      - uses: jfrog/setup-jfrog-cli@v4
+      - uses: jfrog/setup-jfrog-cli@v5
         if: steps.version.outputs.released == 'true'
         env:
           JF_URL: ${{ secrets.JF_URL }}

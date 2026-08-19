@@ -1,0 +1,5 @@
+# The Snowflake CLI, kept apart from the dbt toolchain because the two pin
+# incompatible protobuf majors. Jobs that need only the CLI install this
+# normally; the one job that needs both installs this through pipx, which
+# gives it its own isolated environment.
+snowflake-cli==3.24.1

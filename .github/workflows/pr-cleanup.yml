@@ -17,15 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+          # Without this, setup-python looks for requirements.txt or
+          # pyproject.toml, finds neither, and fails before installing anything.
+          cache-dependency-path: requirements-snow.txt
 
       - name: Install the Snowflake CLI
-        run: pip install --quiet snowflake-cli==3.24.1
+        run: pip install --quiet -r requirements-snow.txt
 
       - name: Write the private key
         env:
@@ -48,7 +51,7 @@ jobs:
                 --database OPS --schema DBT_PROJECTS)
 
           # Both are expected to be gone already on the happy path.
-          snow dbt drop "JAFFLE_SHOP_PR_${PR_NUMBER}" "${conn[@]}" || true
+          snow dbt drop "${conn[@]}" "JAFFLE_SHOP_PR_${PR_NUMBER}" || true
           snow sql -q "drop schema if exists ANALYTICS.PR_${PR_NUMBER} cascade" "${conn[@]}" || true
 
           rm -f /tmp/sf_key.p8
