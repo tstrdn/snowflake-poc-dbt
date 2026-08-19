@@ -38,20 +38,23 @@ jobs:
       # committed back to a protected main, and github-actions[bot] cannot be
       # made a ruleset bypass actor on this account tier. actions/checkout
       # persists this credential, so the later push uses it too.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
           token: ${{ secrets.GH_PUSH_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+          # Without this, setup-python looks for requirements.txt or
+          # pyproject.toml, finds neither, and fails before installing anything.
+          cache-dependency-path: requirements-ci.txt
 
       - name: Install the Snowflake CLI
         run: pip install --quiet snowflake-cli==3.24.1
 
-      - uses: jfrog/setup-jfrog-cli@v4
+      - uses: jfrog/setup-jfrog-cli@v5
         env:
           JF_URL: ${{ secrets.JF_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
