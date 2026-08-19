@@ -70,6 +70,17 @@ jobs:
         if: steps.version.outputs.released == 'true'
         run: |
           dbt deps
+
+          # See pr-validate.yml: the lock file is written in the lock format of
+          # the dbt that resolved it, and Snowflake runs the project with its
+          # own dbt. It is not part of the deployable unit.
+          rm -f package-lock.yml
+
+          # Packages ship their own integration test projects, which are most
+          # of the file count, serve no runtime purpose, and count against
+          # Snowflake's 20,000 file limit per project.
+          rm -rf dbt_packages/*/integration_tests
+
           echo "Vendored packages:"
           ls -1 dbt_packages/
 
@@ -101,7 +112,7 @@ jobs:
             --exclude='./requirements-ci.txt' \
             --exclude='./.sqlfluff' \
             --exclude='./ci' \
-            ./dbt_project.yml ./profiles.yml ./packages.yml ./package-lock.yml \
+            ./dbt_project.yml ./profiles.yml ./packages.yml \
             ./models ./seeds ./macros ./tests ./dbt_packages ./VERSION
 
           sha256sum "${name}" | tee "${name}.sha256"

@@ -39,7 +39,21 @@ jobs:
         run: pip install --quiet -r requirements-ci.txt
 
       - name: dbt deps
-        run: dbt deps
+        run: |
+          dbt deps
+
+          # package-lock.yml is written by dbt deps and records resolved
+          # versions in the lock format of whichever dbt wrote it. Snowflake
+          # executes the project with its own dbt runtime, which rejects that
+          # schema. The file has no job to do in a deployed project anyway -
+          # dependencies are already vendored in dbt_packages/ - so it does not
+          # travel with the project.
+          rm -f package-lock.yml
+
+          # Packages ship their own integration test projects, which are most
+          # of the uploaded file count, serve no runtime purpose, and count
+          # against Snowflake's 20,000 file limit per project.
+          rm -rf dbt_packages/*/integration_tests
 
       # The offline profile, not the deployed one - see ci/profiles.yml.
       - name: dbt parse
@@ -105,7 +119,21 @@ jobs:
       # Snowflake cannot reach the package index, so dependencies are resolved
       # here and travel with the project.
       - name: dbt deps
-        run: dbt deps
+        run: |
+          dbt deps
+
+          # package-lock.yml is written by dbt deps and records resolved
+          # versions in the lock format of whichever dbt wrote it. Snowflake
+          # executes the project with its own dbt runtime, which rejects that
+          # schema. The file has no job to do in a deployed project anyway -
+          # dependencies are already vendored in dbt_packages/ - so it does not
+          # travel with the project.
+          rm -f package-lock.yml
+
+          # Packages ship their own integration test projects, which are most
+          # of the uploaded file count, serve no runtime purpose, and count
+          # against Snowflake's 20,000 file limit per project.
+          rm -rf dbt_packages/*/integration_tests
 
       - name: Write the private key
         env:
