@@ -93,8 +93,14 @@ jobs:
           # pyproject.toml, finds neither, and fails before installing anything.
           cache-dependency-path: requirements-ci.txt
 
-      - name: Install tooling
+      - name: Install the dbt toolchain
         run: pip install --quiet -r requirements-ci.txt
+
+      # This job needs dbt and the Snowflake CLI, which pin incompatible
+      # protobuf majors. pipx gives the CLI its own environment and still puts
+      # `snow` on PATH, so neither has to be downgraded.
+      - name: Install the Snowflake CLI in isolation
+        run: pipx install "$(grep -vE '^\s*#|^\s*$' requirements-snow.txt | head -1)"
 
       # Snowflake cannot reach the package index, so dependencies are resolved
       # here and travel with the project.

@@ -1,7 +1,10 @@
-# Pinned so a CI run months from now builds the same artifact as today. The
-# published artifact records nothing about the tooling that made it, so the
-# pins here are what make a rebuild reproducible.
+# The dbt toolchain. Pinned so a CI run months from now builds the same
+# artifact as today - the published artifact records nothing about the tooling
+# that made it, so these pins are what make a rebuild reproducible.
+#
+# snowflake-cli is deliberately NOT here. It pins protobuf >=5.29.6,<6 while
+# dbt-core pins protobuf >=6.0,<8.0, so the two cannot share a virtualenv.
+# See requirements-snow.txt.
 dbt-core==1.12.2
 dbt-snowflake==1.12.0
-snowflake-cli==3.24.1
 sqlfluff==3.4.2
