@@ -21,6 +21,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # Must match the dbt-core that resolved package-lock.yml in the artifact.
+  DBT_VERSION: "1.11.11"
+
 jobs:
   deploy:
     name: Deploy ${{ inputs.version }} to ${{ inputs.environment }}
@@ -121,6 +125,7 @@ jobs:
             --source . \
             --profiles-dir . \
             --default-target "$TARGET" \
+            --dbt-version "$DBT_VERSION" \
             --install-local-deps \
             --temporary-connection \
             --account "$SF_ACCOUNT" \

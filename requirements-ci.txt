@@ -2,9 +2,14 @@
 # artifact as today - the published artifact records nothing about the tooling
 # that made it, so these pins are what make a rebuild reproducible.
 #
+# dbt-core MUST be a version Snowflake can execute. Snowflake supports 1.11.11,
+# 1.10.15 and 1.9.4; the workflows pass --dbt-version to pin the runtime to the
+# same number. Resolving dependencies with a version Snowflake cannot run
+# produces a package-lock.yml whose schema its dbt rejects.
+#
 # snowflake-cli is deliberately NOT here. It pins protobuf >=5.29.6,<6 while
 # dbt-core pins protobuf >=6.0,<8.0, so the two cannot share a virtualenv.
 # See requirements-snow.txt.
-dbt-core==1.12.2
+dbt-core==1.11.11
 dbt-snowflake==1.12.0
 sqlfluff==3.4.2

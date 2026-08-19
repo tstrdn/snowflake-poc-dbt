@@ -74,7 +74,7 @@ jobs:
           # See pr-validate.yml: the lock file is written in the lock format of
           # the dbt that resolved it, and Snowflake runs the project with its
           # own dbt. It is not part of the deployable unit.
-          rm -f package-lock.yml
+          # package-lock.yml ships with the project - see pr-validate.yml.
 
           # Packages ship their own integration test projects, which are most
           # of the file count, serve no runtime purpose, and count against
@@ -112,7 +112,7 @@ jobs:
             --exclude='./requirements-ci.txt' \
             --exclude='./.sqlfluff' \
             --exclude='./ci' \
-            ./dbt_project.yml ./profiles.yml ./packages.yml \
+            ./dbt_project.yml ./profiles.yml ./packages.yml ./package-lock.yml \
             ./models ./seeds ./macros ./tests ./dbt_packages ./VERSION
 
           sha256sum "${name}" | tee "${name}.sha256"
