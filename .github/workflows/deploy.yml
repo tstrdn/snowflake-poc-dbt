@@ -34,9 +34,14 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      # GH_PUSH_TOKEN, not the default GITHUB_TOKEN. The version pin is
+      # committed back to a protected main, and github-actions[bot] cannot be
+      # made a ruleset bypass actor on this account tier. actions/checkout
+      # persists this credential, so the later push uses it too.
       - uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ secrets.GH_PUSH_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -159,8 +164,8 @@ jobs:
           git add "deploy/${ENVIRONMENT}.version"
           git commit -m "chore(${ENVIRONMENT}): deploy artifact v${VERSION}"
 
-          # Needs the github-actions bot as a bypass actor on the main branch
-          # ruleset - see the infrastructure repository's bootstrap runbook.
+          # Pushed with GH_PUSH_TOKEN - github-actions[bot] cannot be a ruleset
+          # bypass actor here. See the infrastructure repository's runbook.
           git push origin HEAD:main
 
       - name: Clean up the key
