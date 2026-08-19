@@ -143,7 +143,9 @@ jobs:
           TARGET: ${{ inputs.environment }}
         run: |
           cd project
-          snow dbt execute JAFFLE_SHOP build --target "$TARGET" \
+          # Connection options must precede the project name - anything after
+          # the dbt command is forwarded to dbt rather than read by snow.
+          snow dbt execute \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
             --user "$SF_USER" \
@@ -152,7 +154,8 @@ jobs:
             --role TRANSFORMER \
             --warehouse WH_TRANSFORM_XS \
             --database OPS \
-            --schema DBT_PROJECTS
+            --schema DBT_PROJECTS \
+            JAFFLE_SHOP build --target "$TARGET"
 
       - name: Record the deployment
         env:

@@ -150,7 +150,10 @@ jobs:
         run: |
           # `build` runs seeds, models and tests in dependency order, so a
           # broken model and a failing test both surface here.
-          snow dbt execute "$DBT_PROJECT_NAME" build --target ci \
+          # Connection options must come BEFORE the project name: everything
+          # after the dbt command is forwarded verbatim to dbt, so flags placed
+          # at the end never reach the Snowflake CLI at all.
+          snow dbt execute \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
             --user "$SF_USER" \
@@ -159,7 +162,8 @@ jobs:
             --role TRANSFORMER \
             --warehouse WH_TRANSFORM_XS \
             --database OPS \
-            --schema DBT_PROJECTS
+            --schema DBT_PROJECTS \
+            "$DBT_PROJECT_NAME" build --target ci
 
       # Always, so a failed build does not leave a schema and a project object
       # behind. pr-cleanup.yml is the backstop for cancelled runs.
@@ -176,7 +180,7 @@ jobs:
                 --role TRANSFORMER --warehouse WH_TRANSFORM_XS
                 --database OPS --schema DBT_PROJECTS)
 
-          snow dbt drop "$DBT_PROJECT_NAME" "${conn[@]}" || echo "project object already gone"
+          snow dbt drop "${conn[@]}" "$DBT_PROJECT_NAME" || echo "project object already gone"
           snow sql -q "drop schema if exists ANALYTICS.${CI_SCHEMA} cascade" "${conn[@]}" \
             || echo "schema already gone"
 

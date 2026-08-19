@@ -51,7 +51,7 @@ jobs:
                 --database OPS --schema DBT_PROJECTS)
 
           # Both are expected to be gone already on the happy path.
-          snow dbt drop "JAFFLE_SHOP_PR_${PR_NUMBER}" "${conn[@]}" || true
+          snow dbt drop "${conn[@]}" "JAFFLE_SHOP_PR_${PR_NUMBER}" || true
           snow sql -q "drop schema if exists ANALYTICS.PR_${PR_NUMBER} cascade" "${conn[@]}" || true
 
           rm -f /tmp/sf_key.p8
