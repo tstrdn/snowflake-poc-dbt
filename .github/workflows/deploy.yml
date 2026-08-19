@@ -126,7 +126,6 @@ jobs:
             --profiles-dir . \
             --default-target "$TARGET" \
             --dbt-version "$DBT_VERSION" \
-            --install-local-deps \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
             --user "$SF_USER" \

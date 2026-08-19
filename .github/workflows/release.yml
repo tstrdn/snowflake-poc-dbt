@@ -14,7 +14,6 @@ on:
       - "tests/**"
       - "dbt_project.yml"
       - "profiles.yml"
-      - "packages.yml"
       - "VERSION"
       - ".github/workflows/release.yml"
 
@@ -63,27 +62,6 @@ jobs:
         if: steps.version.outputs.released == 'true'
         run: pip install --quiet -r requirements-ci.txt
 
-      # The one place dependencies are resolved. Snowflake has no outbound
-      # network access on a trial account, so dbt_packages/ has to be inside
-      # the artifact rather than fetched at deploy time.
-      - name: Resolve dependencies
-        if: steps.version.outputs.released == 'true'
-        run: |
-          dbt deps
-
-          # See pr-validate.yml: the lock file is written in the lock format of
-          # the dbt that resolved it, and Snowflake runs the project with its
-          # own dbt. It is not part of the deployable unit.
-          # package-lock.yml ships with the project - see pr-validate.yml.
-
-          # Packages ship their own integration test projects, which are most
-          # of the file count, serve no runtime purpose, and count against
-          # Snowflake's 20,000 file limit per project.
-          rm -rf dbt_packages/*/integration_tests
-
-          echo "Vendored packages:"
-          ls -1 dbt_packages/
-
       - name: Verify the project parses
         if: steps.version.outputs.released == 'true'
         run: dbt parse --profiles-dir ci --target parse
@@ -112,8 +90,8 @@ jobs:
             --exclude='./requirements-ci.txt' \
             --exclude='./.sqlfluff' \
             --exclude='./ci' \
-            ./dbt_project.yml ./profiles.yml ./packages.yml ./package-lock.yml \
-            ./models ./seeds ./macros ./tests ./dbt_packages ./VERSION
+            ./dbt_project.yml ./profiles.yml \
+            ./models ./seeds ./macros ./tests ./VERSION
 
           sha256sum "${name}" | tee "${name}.sha256"
 

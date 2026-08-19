@@ -41,21 +41,6 @@ jobs:
       - name: Install dbt
         run: pip install --quiet -r requirements-ci.txt
 
-      - name: dbt deps
-        run: |
-          dbt deps
-
-          # package-lock.yml ships with the project. Without it dbt re-resolves
-          # packages.yml and calls hub.getdbt.com, which Snowflake cannot reach.
-          # With it, and with dbt_packages/ vendored, dbt deps is a no-op. This
-          # only holds while the dbt that writes the lock matches the dbt that
-          # reads it - hence the pinned --dbt-version below.
-
-          # Packages ship their own integration test projects, which are most
-          # of the uploaded file count, serve no runtime purpose, and count
-          # against Snowflake's 20,000 file limit per project.
-          rm -rf dbt_packages/*/integration_tests
-
       # The offline profile, not the deployed one - see ci/profiles.yml.
       - name: dbt parse
         run: dbt parse --profiles-dir ci --target parse
@@ -73,7 +58,7 @@ jobs:
           base="origin/${{ github.base_ref }}"
           git fetch --quiet origin "${{ github.base_ref }}"
 
-          if ! git diff --quiet "$base" HEAD -- models/ seeds/ macros/ tests/ dbt_project.yml profiles.yml packages.yml; then
+          if ! git diff --quiet "$base" HEAD -- models/ seeds/ macros/ tests/ dbt_project.yml profiles.yml; then
             if git diff --quiet "$base" HEAD -- VERSION; then
               echo "::error file=VERSION::The dbt project changed but VERSION did not."
               echo "Artifacts are immutable; a changed project needs a new version."
@@ -119,21 +104,6 @@ jobs:
 
       # Snowflake cannot reach the package index, so dependencies are resolved
       # here and travel with the project.
-      - name: dbt deps
-        run: |
-          dbt deps
-
-          # package-lock.yml ships with the project. Without it dbt re-resolves
-          # packages.yml and calls hub.getdbt.com, which Snowflake cannot reach.
-          # With it, and with dbt_packages/ vendored, dbt deps is a no-op. This
-          # only holds while the dbt that writes the lock matches the dbt that
-          # reads it - hence the pinned --dbt-version below.
-
-          # Packages ship their own integration test projects, which are most
-          # of the uploaded file count, serve no runtime purpose, and count
-          # against Snowflake's 20,000 file limit per project.
-          rm -rf dbt_packages/*/integration_tests
-
       - name: Write the private key
         env:
           SF_PRIVATE_KEY: ${{ secrets.SF_PRIVATE_KEY }}
@@ -162,7 +132,6 @@ jobs:
             --profiles-dir . \
             --default-target ci \
             --dbt-version "$DBT_VERSION" \
-            --install-local-deps \
             --force \
             --temporary-connection \
             --account "$SF_ACCOUNT" \
