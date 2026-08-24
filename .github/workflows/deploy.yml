@@ -1,10 +1,15 @@
 name: Deploy
 
-# Reusable deployment of one artifact version to one environment.
+# Reusable deployment of one immutable artifact version to one environment.
 #
 # Development runs this automatically after a release; test and production run
-# it through promote.yml behind an approval gate. The steps are identical in
-# every case - only the target account and the gate differ.
+# it through promote.yml behind a two-role approval (E17/E18 - see
+# promote.yml). The steps are identical in every case - only the target
+# account and the gate differ. There is no per-environment version file
+# committed back to this repository: what is deployed is answered by which
+# tag was checked out, by the checksum verified below, and by the version
+# stamped onto the DBT PROJECT object itself at the end of this job (E5/E6,
+# applied here by the same reasoning used for the infrastructure repository).
 
 on:
   workflow_call:
@@ -19,7 +24,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   # Must match the dbt-core that resolved package-lock.yml in the artifact.
@@ -38,14 +43,13 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # GH_PUSH_TOKEN, not the default GITHUB_TOKEN. The version pin is
-      # committed back to a protected main, and github-actions[bot] cannot be
-      # made a ruleset bypass actor on this account tier. actions/checkout
-      # persists this credential, so the later push uses it too.
+      # The immutable tag, not a moving branch. What is deployed is the tree
+      # at this exact tag, every time it is deployed - this repository's
+      # workflow scripts cannot drift out from under an artifact that was
+      # already built and checksummed against an earlier state of main.
       - uses: actions/checkout@v5
         with:
-          ref: main
-          token: ${{ secrets.GH_PUSH_TOKEN }}
+          ref: refs/tags/v${{ inputs.version }}
 
       - uses: actions/setup-python@v6
         with:
@@ -70,8 +74,14 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # The trailing * matters: without it, jf rt download resolved the
+          # directory to a single match and silently fetched only the .tgz,
+          # never the .tgz.sha256 next to it - confirmed from run 32245121363,
+          # where the checksum step failed on a missing file rather than a
+          # mismatch. The wildcard makes it enumerate everything under the
+          # version directory.
           jf rt download \
-            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
+            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/*" \
             artifact/ --flat --fail-no-op
 
           ls -l artifact/
@@ -157,26 +167,34 @@ jobs:
             --schema DBT_PROJECTS \
             JAFFLE_SHOP build --target "$TARGET"
 
-      - name: Record the deployment
+      # E6, applied to this track: the deployed version becomes queryable
+      # directly from Snowflake (DESCRIBE DBT PROJECT OPS.DBT_PROJECTS.
+      # JAFFLE_SHOP) instead of only from a version file that a workflow used
+      # to commit back to main. ALTER DBT PROJECT ... SET COMMENT is
+      # documented at
+      # https://docs.snowflake.com/en/sql-reference/sql/alter-dbt-project.
+      # Non-fatal on failure: a stamping problem should not undo a deployment
+      # that otherwise succeeded, but it must be visible, not silent.
+      - name: Stamp the deployed version
+        if: always()
         env:
-          ENVIRONMENT: ${{ inputs.environment }}
+          SF_ACCOUNT: ${{ secrets.SF_ACCOUNT }}
+          SF_USER: ${{ secrets.SF_USER }}
           VERSION: ${{ inputs.version }}
         run: |
-          echo "$VERSION" > "deploy/${ENVIRONMENT}.version"
-
-          if git diff --quiet -- "deploy/${ENVIRONMENT}.version"; then
-            echo "Already recorded as ${VERSION}."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "deploy/${ENVIRONMENT}.version"
-          git commit -m "chore(${ENVIRONMENT}): deploy artifact v${VERSION}"
-
-          # Pushed with GH_PUSH_TOKEN - github-actions[bot] cannot be a ruleset
-          # bypass actor here. See the infrastructure repository's runbook.
-          git push origin HEAD:main
+          comment="v${VERSION} sha256=${ARTIFACT_SHA256:-unknown} deployed=$(date -u +%Y-%m-%dT%H:%M:%SZ) by=${GITHUB_ACTOR}"
+          snow sql \
+            --temporary-connection \
+            --account "$SF_ACCOUNT" \
+            --user "$SF_USER" \
+            --private-key-file /tmp/sf_key.p8 \
+            --authenticator SNOWFLAKE_JWT \
+            --role TRANSFORMER \
+            --warehouse WH_TRANSFORM_XS \
+            --database OPS \
+            --schema DBT_PROJECTS \
+            -q "ALTER DBT PROJECT IF EXISTS OPS.DBT_PROJECTS.JAFFLE_SHOP SET COMMENT = '${comment}'" \
+            || echo "::warning::Could not stamp the version comment onto the DBT PROJECT object. Deployment result above is unaffected."
 
       - name: Clean up the key
         if: always()
@@ -197,4 +215,8 @@ jobs:
             echo "| Artifact version | \`${VERSION}\` |"
             echo "| SHA256 | \`${ARTIFACT_SHA256:-not verified}\` |"
             echo "| Result | ${{ job.status }} |"
+            echo
+            echo "What this environment is running can also be read directly from"
+            echo "Snowflake: \`DESCRIBE DBT PROJECT OPS.DBT_PROJECTS.JAFFLE_SHOP\` shows"
+            echo "the deployed version in the comment."
           } >> "$GITHUB_STEP_SUMMARY"

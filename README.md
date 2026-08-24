@@ -37,8 +37,12 @@ tests/               singular tests beyond the schema tests
 profiles.yml         deployed targets: dev, tst, prd, ci — deliberately no credentials
 ci/profiles.yml      throwaway profile so dbt parse can run offline
 dev/                 template for local development
-deploy/*.version     which artifact version each environment runs
 ```
+
+Which artifact version each environment runs is not tracked as a file in this
+repository. It is answered by the release tag that was deployed, and directly
+from Snowflake: `DESCRIBE DBT PROJECT OPS.DBT_PROJECTS.JAFFLE_SHOP` shows the
+deployed version in the object's comment, stamped there by deploy.yml.
 
 ## Developing
 
