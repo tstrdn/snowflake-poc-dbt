@@ -93,10 +93,19 @@ jobs:
             ./dbt_project.yml ./profiles.yml \
             ./models ./seeds ./macros ./tests ./VERSION
 
-          sha256sum "${name}" | tee "${name}.sha256"
+          # .checksum, not .sha256: Artifactory treats *.sha1/*.sha256/*.md5
+          # as checksum sidecar metadata for a same-named artifact rather than
+          # as an independent, searchable file - the upload reports success,
+          # but it never turns up through jf rt download's normal resolution
+          # afterward. Confirmed the hard way across three deploy attempts
+          # (runs 32245121363, 32818683785, 32821882284) before finding this
+          # documented at https://jfrog.com/help - "checksum files (.sha1,
+          # .sha256 and .md5 files) are displayed... in the HTML browsing
+          # endpoint", i.e. a different path than what jf rt download uses.
+          sha256sum "${name}" | tee "${name}.checksum"
 
           echo "artifact=${name}" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(cut -d' ' -f1 < "${name}.sha256")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 < "${name}.checksum")" >> "$GITHUB_OUTPUT"
 
           echo "Artifact contents:"
           tar --list --file "${name}" | head -30
@@ -119,7 +128,7 @@ jobs:
             "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
             --fail-no-op
 
-          jf rt upload "${ARTIFACT}.sha256" \
+          jf rt upload "${ARTIFACT}.checksum" \
             "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/" \
             --fail-no-op
 
