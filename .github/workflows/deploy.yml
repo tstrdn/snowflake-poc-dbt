@@ -74,18 +74,20 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # Two exact, fully-qualified downloads - one per file - rather than
-          # a directory pattern. A directory-level source (with or without a
-          # trailing wildcard) reliably fetched only the .tgz and silently
-          # dropped the .tgz.sha256 next to it, confirmed across two separate
-          # runs (32245121363, 32818683785); the exact cause inside jf rt
-          # download's matching was never pinned down, so this sidesteps it
-          # entirely rather than tuning the pattern a third time. Mirrors how
-          # release.yml already publishes: two explicit uploads, not one
-          # directory-level operation.
+          # Two exact, fully-qualified downloads - one per file. The checksum
+          # sidecar is named *.checksum, not *.sha256: Artifactory treats
+          # .sha1/.sha256/.md5 as checksum metadata for a same-named artifact
+          # rather than as an independent, searchable file - the upload
+          # reports success, but jf rt download's normal resolution never
+          # finds it afterward, with or without a wildcard. Confirmed the hard
+          # way across three deploy attempts (runs 32245121363, 32818683785,
+          # 32821882284) before finding this documented at
+          # https://jfrog.com/help - "checksum files (.sha1, .sha256 and .md5
+          # files) are displayed... in the HTML browsing endpoint", i.e. a
+          # different path than jf rt download uses.
           base="snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}"
           jf rt download "${base}/snowflake-poc-dbt-${VERSION}.tgz" artifact/ --flat --fail-no-op
-          jf rt download "${base}/snowflake-poc-dbt-${VERSION}.tgz.sha256" artifact/ --flat --fail-no-op
+          jf rt download "${base}/snowflake-poc-dbt-${VERSION}.tgz.checksum" artifact/ --flat --fail-no-op
 
           ls -l artifact/
 
@@ -98,7 +100,7 @@ jobs:
           set -euo pipefail
           cd artifact
 
-          expected=$(cut -d' ' -f1 < "snowflake-poc-dbt-${VERSION}.tgz.sha256")
+          expected=$(cut -d' ' -f1 < "snowflake-poc-dbt-${VERSION}.tgz.checksum")
           actual=$(sha256sum "snowflake-poc-dbt-${VERSION}.tgz" | cut -d' ' -f1)
 
           echo "expected ${expected}"
