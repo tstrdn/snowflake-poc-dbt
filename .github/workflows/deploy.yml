@@ -74,15 +74,18 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # The trailing * matters: without it, jf rt download resolved the
-          # directory to a single match and silently fetched only the .tgz,
-          # never the .tgz.sha256 next to it - confirmed from run 32245121363,
-          # where the checksum step failed on a missing file rather than a
-          # mismatch. The wildcard makes it enumerate everything under the
-          # version directory.
-          jf rt download \
-            "snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}/*" \
-            artifact/ --flat --fail-no-op
+          # Two exact, fully-qualified downloads - one per file - rather than
+          # a directory pattern. A directory-level source (with or without a
+          # trailing wildcard) reliably fetched only the .tgz and silently
+          # dropped the .tgz.sha256 next to it, confirmed across two separate
+          # runs (32245121363, 32818683785); the exact cause inside jf rt
+          # download's matching was never pinned down, so this sidesteps it
+          # entirely rather than tuning the pattern a third time. Mirrors how
+          # release.yml already publishes: two explicit uploads, not one
+          # directory-level operation.
+          base="snowflake-poc-dbt-artifacts/jaffle-shop/${VERSION}"
+          jf rt download "${base}/snowflake-poc-dbt-${VERSION}.tgz" artifact/ --flat --fail-no-op
+          jf rt download "${base}/snowflake-poc-dbt-${VERSION}.tgz.sha256" artifact/ --flat --fail-no-op
 
           ls -l artifact/
 
