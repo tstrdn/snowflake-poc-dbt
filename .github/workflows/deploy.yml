@@ -3,8 +3,8 @@ name: Deploy
 # Reusable deployment of one immutable artifact version to one environment.
 #
 # Development runs this automatically after a release; test and production run
-# it through promote.yml behind a two-role approval (E17/E18 - see
-# promote.yml). The steps are identical in every case - only the target
+# it through promote.yml (see that file for the current PoC-scope approval
+# decision). The steps are identical in every case - only the target
 # account and the gate differ. There is no per-environment version file
 # committed back to this repository: what is deployed is answered by which
 # tag was checked out, by the checksum verified below, and by the version
